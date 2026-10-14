@@ -37,7 +37,7 @@ export default function Header({
               <div className="flex items-center space-x-2">
                 <h1 className="text-base sm:text-lg font-black tracking-wider text-white">NEXUS ANDROKILLER</h1>
                 <span className="hidden xs:inline-block text-[9px] sm:text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-800/40 uppercase">
-                  v1.1.0
+                  v1.2.0
                 </span>
               </div>
               <p className="text-[10px] sm:text-[11px] text-slate-400 font-mono">Mobile Telemetry & Remote Control Hub</p>
@@ -86,7 +86,7 @@ export default function Header({
               ) : (
                 devices.map((dev) => (
                   <option key={dev.deviceId || dev.id} value={dev.deviceId || dev.id} className="bg-slate-900 text-white">
-                    {dev.deviceName || dev.deviceId} • Online 🟢
+                    {dev.deviceName || dev.deviceId} • {dev.isConnected !== false ? 'Online 🟢' : 'Standby 🟡'}
                   </option>
                 ))
               )}
@@ -107,10 +107,17 @@ export default function Header({
 
           {/* Connection Status Badge (hidden on mobile, visible on sm+) */}
           <div className="hidden sm:flex items-center space-x-1.5 px-3 py-1.5 rounded-xl border text-xs font-semibold bg-slate-800/60 border-slate-700 shrink-0">
-            {devices.length > 0 ? (
+            {devices.some(d => d.isConnected !== false) ? (
               <>
                 <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                <span className="text-emerald-400 font-mono">{devices.length} Online</span>
+                <span className="text-emerald-400 font-mono">
+                  {devices.filter(d => d.isConnected !== false).length} Online
+                </span>
+              </>
+            ) : devices.length > 0 ? (
+              <>
+                <span className="w-2 h-2 rounded-full bg-amber-400"></span>
+                <span className="text-amber-300 font-mono">{devices.length} Paired</span>
               </>
             ) : (
               <>

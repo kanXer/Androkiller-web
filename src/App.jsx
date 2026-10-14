@@ -17,8 +17,12 @@ import {
   subscribeToCallLogs,
   subscribeToSmsLogs,
   subscribeToInstalledApps,
+  subscribeToNotifications,
   subscribeToStorageConfig,
-  deleteDevice
+  deleteDevice,
+  deleteNotification,
+  clearAllNotifications,
+  markNotificationRead
 } from './services/trackerService';
 
 // Web Audio API Synthesizer Notification Sound
@@ -63,6 +67,7 @@ export default function App() {
   const [files, setFiles] = useState([]);
   const [callLogs, setCallLogs] = useState([]);
   const [smsLogs, setSmsLogs] = useState([]);
+  const [notifications, setNotifications] = useState([]);
   const [installedAppsData, setInstalledAppsData] = useState(null);
   const [isSetupModalOpen, setIsSetupModalOpen] = useState(false);
   const [isStorageModalOpen, setIsStorageModalOpen] = useState(false);
@@ -73,6 +78,9 @@ export default function App() {
 
   const isInitialLoad = useRef(true);
   const knownDeviceIdsRef = useRef(new Set());
+  // When true, temporarily ignore Firestore notification updates (during delete/clear ops)
+  const suppressNotifUpdatesRef = useRef(false);
+
 
   // Helper to add real-time notification toast with audio chime
   const addToast = (title, message, iconType = 'info') => {
@@ -256,6 +264,29 @@ export default function App() {
     const unsubFiles = subscribeToDeviceFiles(activeDeviceId, setFiles);
     const unsubCallLogs = subscribeToCallLogs(activeDeviceId, setCallLogs);
     const unsubSmsLogs = subscribeToSmsLogs(activeDeviceId, setSmsLogs);
+    
+    // Notifications: handle demo mode with local state
+    let unsubNotifications = () => {};
+    if (activeDeviceId === 'dev_preview_nexus') {
+      // Demo mode: initialize with default notifications if empty
+      setNotifications(prev => prev.length === 0 ? [
+        { id: 'n1', type: 'CALL_INCOMING', title: 'Incoming Call', body: 'Call from Mom (+919876543210)', contactName: 'Mom', contactNumber: '+919876543210', priority: 'MAX', isRead: false, timestamp: new Date() },
+        { id: 'n2', type: 'SMS_INCOMING', title: 'New SMS', body: 'Are you on your way home?', contactName: 'Mom', contactNumber: '+919876543210', priority: 'HIGH', isRead: false, timestamp: new Date(Date.now() - 1800000) },
+        { id: 'n3', type: 'GUARDIAN_MESSAGE', title: 'Guardian Alert', body: 'Please confirm you reached safely', contactName: '', contactNumber: '', priority: 'MAX', isRead: true, timestamp: new Date(Date.now() - 3600000) },
+        { id: 'n4', type: 'CALL_MISSED', title: 'Missed Call', body: 'Missed call from Dad (+919812345678)', contactName: 'Dad', contactNumber: '+919812345678', priority: 'HIGH', isRead: false, timestamp: new Date(Date.now() - 7200000) },
+        { id: 'n5', type: 'SYSTEM_ALERT', title: 'Battery Low', body: 'Device battery is at 15%', contactName: '', contactNumber: '', priority: 'HIGH', isRead: true, timestamp: new Date(Date.now() - 14400000) }
+      ] : prev);
+    } else {
+      unsubNotifications = subscribeToNotifications(activeDeviceId, (updatedNotifs) => {
+        // Skip Firestore updates while a delete/clear is in progress
+        // to prevent the listener from immediately re-populating deleted items.
+        if (!suppressNotifUpdatesRef.current) {
+          setNotifications(updatedNotifs);
+        }
+      });
+
+    }
+    
     const unsubApps = subscribeToInstalledApps(activeDeviceId, setInstalledAppsData);
 
     return () => {
@@ -266,6 +297,7 @@ export default function App() {
       unsubFiles();
       unsubCallLogs();
       unsubSmsLogs();
+      unsubNotifications();
       unsubApps();
     };
   }, [activeDeviceId]);
@@ -335,7 +367,49 @@ export default function App() {
             files={files}
             callLogs={callLogs}
             smsLogs={smsLogs}
+            notifications={notifications}
             installedAppsData={installedAppsData}
+            onDeleteNotification={async (id) => {
+              // Suppress Firestore listener briefly so deleted item doesn't bounce back
+              suppressNotifUpdatesRef.current = true;
+              setNotifications(prev => prev.filter(n => n.id !== id));
+              if (activeDeviceId !== 'dev_preview_nexus') {
+                try {
+                  await deleteNotification(activeDeviceId, id);
+                } catch (err) {
+                  console.error('Failed to delete notification from Firestore:', err);
+                  addToast('Delete Notice', 'Removed from view (server sync queued)', 'info');
+                }
+              }
+              // Re-enable listener after 3 seconds (enough time for Firestore to confirm delete)
+              setTimeout(() => { suppressNotifUpdatesRef.current = false; }, 3000);
+            }}
+            onClearNotifications={async () => {
+              // Suppress Firestore listener during and after clear to prevent bounce-back
+              suppressNotifUpdatesRef.current = true;
+              setNotifications([]);
+              if (activeDeviceId !== 'dev_preview_nexus') {
+                try {
+                  await clearAllNotifications(activeDeviceId);
+                } catch (err) {
+                  console.error('Failed to clear notifications from Firestore:', err);
+                  addToast('Clear Notice', 'Cleared from view (server sync queued)', 'info');
+                }
+              }
+              // Re-enable listener after 5 seconds — gives Firestore time to propagate deletes
+              setTimeout(() => { suppressNotifUpdatesRef.current = false; }, 5000);
+            }}
+
+            onMarkNotificationRead={async (id) => {
+              setNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
+              if (activeDeviceId !== 'dev_preview_nexus') {
+                try {
+                  await markNotificationRead(activeDeviceId, id);
+                } catch (err) {
+                  console.error('Failed to mark notification read:', err);
+                }
+              }
+            }}
             onRequestDeleteDevice={(dev) => {
               if ((dev?.deviceId || dev?.id) === 'dev_preview_nexus') {
                 setSimulatedDevice(null);
